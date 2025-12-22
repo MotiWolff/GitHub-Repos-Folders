@@ -1,0 +1,38 @@
+:root {
+  /* Keep our CSS minimal; rely on GitHub's Primer theme/classes whenever possible. */
+}
+
+.ghf-panel {
+  margin-bottom: 16px;
+}
+
+.ghf-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ghf-row > .form-control {
+  flex: 1;
+  min-width: 220px;
+}
+
+.ghf-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ghf-folder-header-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.ghf-folder-header-meta {
+  font-size: 12px;
+}
+
+.ghf-hidden-by-collapse {
+  display: none !important;
+}
+
+

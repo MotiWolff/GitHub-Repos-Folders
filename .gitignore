@@ -1,0 +1,28 @@
+# Node.js dependencies (if using npm/yarn)
+node_modules
+
+# Build artifacts (if you have a build step, e.g., using Webpack, Babel, etc.)
+dist
+build
+# or a specific folder if you name it differently
+/package
+
+# Temporary files, OS and editor specific files
+*~
+*.swp
+.DS_store
+_debug
+_metadata
+
+# Chrome extension specific files to ignore during development/packaging if needed
+# (though generally everything in the source should be tracked)
+# If you are using APIs that generate specific local files, list them here.
+
+# Example from Chrome extension samples repo
+# Temporary directory for debugging extension samples
+_debug
+_metadata
+dist
+
+# Zip Files
+github-repo-folders.zip
