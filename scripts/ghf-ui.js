@@ -148,55 +148,11 @@
 
     panelEl.appendChild(body);
 
-    const folders = [...state.folders].sort((a, b) => a.name.localeCompare(b.name));
-    if (folders.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "Box-row color-fg-muted f6";
-      empty.textContent = "No folders yet. Create one above, then assign repos via the dropdown.";
-      panelEl.appendChild(empty);
-      return;
-    }
-
-    for (const folder of folders) {
-      const item = document.createElement("div");
-      item.className = "Box-row d-flex flex-items-center";
-
-      const name = document.createElement("div");
-      name.className = "flex-1 f6 text-bold";
-      name.textContent = folder.name;
-
-      const actions = document.createElement("div");
-      actions.className = "ghf-actions";
-
-      const renameBtn = document.createElement("button");
-      renameBtn.className = "btn btn-sm";
-      renameBtn.type = "button";
-      renameBtn.textContent = "Rename";
-      renameBtn.addEventListener("click", async () => {
-        const proposed = prompt("Rename folder:", folder.name);
-        const next = await ghf.renameFolder(folder.id, proposed);
-        if (!next) return;
-        onStateChanged(next);
-      });
-
-      const delBtn = document.createElement("button");
-      delBtn.className = "btn btn-sm btn-danger";
-      delBtn.type = "button";
-      delBtn.textContent = "Delete";
-      delBtn.addEventListener("click", async () => {
-        const ok = confirm(`Delete folder "${folder.name}"? (repos will become Unfiled)`);
-        if (!ok) return;
-        const next = await ghf.deleteFolder(folder.id);
-        onStateChanged(next);
-      });
-
-      actions.appendChild(renameBtn);
-      actions.appendChild(delBtn);
-
-      item.appendChild(name);
-      item.appendChild(actions);
-      panelEl.appendChild(item);
-    }
+    const hint = document.createElement("div");
+    hint.className = "Box-row color-fg-muted f6";
+    hint.textContent =
+      "Tip: Use the folder header actions in the repositories list to Rename/Delete folders and Collapse/Expand sections.";
+    panelEl.appendChild(hint);
   };
 
   ghf.ensureRepoDropdown = function ensureRepoDropdown({ li, fullName }, state, onStateChanged) {
