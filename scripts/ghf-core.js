@@ -124,6 +124,20 @@
     return `${ghf.BASE_STORAGE_KEY}:${login || "anonymous"}`;
   };
 
+  ghf.isMyRepositoriesPage = function isMyRepositoriesPage() {
+    const login = ghf.getViewerLogin();
+    if (!login) return false;
+
+    const tab = new URLSearchParams(location.search).get("tab");
+    if (tab !== "repositories") return false;
+
+    // Match /<login> (case-insensitive), with optional trailing slash.
+    const path = location.pathname.replace(/\/+$/, "");
+    const m = path.match(/^\/([^/]+)$/);
+    if (!m) return false;
+    return m[1].toLowerCase() === login.toLowerCase();
+  };
+
   ghf.clearCurrentAccountData = async function clearCurrentAccountData() {
     const key = ghf.getStorageKey();
     st.lastUiError = "";

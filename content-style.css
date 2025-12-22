@@ -35,4 +35,35 @@
   display: none !important;
 }
 
+/* Folder header kebab menu (custom popover to avoid GitHub dropdown positioning issues) */
+.ghf-folder-menu {
+  position: fixed;
+  z-index: 2147483647;
+  min-width: 160px;
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid var(--color-border-default, #30363d);
+  background: var(--color-canvas-overlay, #161b22);
+  box-shadow: var(--color-shadow-large, 0 8px 24px rgba(1, 4, 9, 0.24));
+}
+
+.ghf-folder-menu-item {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--color-fg-default, #e6edf3);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.ghf-folder-menu-item:hover {
+  background: var(--color-neutral-muted, rgba(110, 118, 129, 0.2));
+}
+
+.ghf-folder-menu-item-danger {
+  color: var(--color-danger-fg, #f85149);
+}
 
