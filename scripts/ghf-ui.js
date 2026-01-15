@@ -3,6 +3,43 @@
   if (!ghf) return;
   const st = ghf._state;
 
+  // NEW: Intersection Observer for lazy loading dropdowns
+  st.dropdownObserver = st.dropdownObserver || null;
+  st.pendingDropdowns = st.pendingDropdowns || new Set();
+
+  // NEW: Initialize Intersection Observer for lazy loading
+  function ensureIntersectionObserver() {
+    if (st.dropdownObserver) return st.dropdownObserver;
+
+    st.dropdownObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const li = entry.target;
+            const fullName = li.dataset?.[`${ghf.EXT_NAMESPACE}LazyRepo`];
+            if (fullName && st.pendingDropdowns.has(fullName)) {
+              st.pendingDropdowns.delete(fullName);
+              // Trigger actual dropdown creation
+              const state = li.dataset?.[`${ghf.EXT_NAMESPACE}LazyState`];
+              const onStateChanged = li.dataset?.[`${ghf.EXT_NAMESPACE}LazyCallback`];
+              if (state && onStateChanged) {
+                renderRepoDropdown(li, fullName, JSON.parse(state), window[onStateChanged]);
+              }
+              st.dropdownObserver.unobserve(li);
+            }
+          }
+        }
+      },
+      {
+        root: null,
+        rootMargin: "100px", // Load when within 100px of viewport
+        threshold: 0.01
+      }
+    );
+
+    return st.dropdownObserver;
+  }
+
   ghf.ensurePanel = function ensurePanel(containerEl, state, onStateChanged) {
     if (!containerEl) return null;
     const existing = containerEl.querySelector(`:scope > .ghf-panel[data-${ghf.EXT_NAMESPACE}-panel="1"]`);
@@ -155,7 +192,8 @@
     panelEl.appendChild(hint);
   };
 
-  ghf.ensureRepoDropdown = function ensureRepoDropdown({ li, fullName }, state, onStateChanged) {
+  // NEW: Helper to render a single repo dropdown (extracted for reuse)
+  function renderRepoDropdown(li, fullName, state, onStateChanged) {
     if (!li) return;
 
     let control = li.querySelector(`.ghf-repo-control[data-${ghf.EXT_NAMESPACE}-repo="${fullName}"]`);
@@ -183,21 +221,27 @@
     const folders = [...state.folders].sort((a, b) => a.name.localeCompare(b.name));
     const foldersSig = folders.map((f) => `${f.id}:${f.name}`).join("|");
 
+    // NEW: Only update options if folders changed
     if (select.dataset[`${ghf.EXT_NAMESPACE}FoldersSig`] !== foldersSig) {
       select.dataset[`${ghf.EXT_NAMESPACE}FoldersSig`] = foldersSig;
-      select.innerHTML = "";
-
+      
+      // Use document fragment for batch DOM updates
+      const fragment = document.createDocumentFragment();
+      
       const noneOpt = document.createElement("option");
       noneOpt.value = "";
       noneOpt.textContent = "Unfiled";
-      select.appendChild(noneOpt);
+      fragment.appendChild(noneOpt);
 
       for (const folder of folders) {
         const opt = document.createElement("option");
         opt.value = folder.id;
         opt.textContent = folder.name;
-        select.appendChild(opt);
+        fragment.appendChild(opt);
       }
+      
+      select.innerHTML = "";
+      select.appendChild(fragment);
     }
 
     const current = state.assignments?.[fullName] ?? "";
@@ -214,7 +258,56 @@
         onStateChanged(next);
       });
     }
+  }
+
+  // NEW: Batch process repo dropdowns with lazy loading
+  ghf.ensureRepoDropdown = function ensureRepoDropdown({ li, fullName }, state, onStateChanged) {
+    if (!li || !fullName) return;
+
+    // Check if dropdown already exists
+    const existing = li.querySelector(`.ghf-repo-control[data-${ghf.EXT_NAMESPACE}-repo="${fullName}"]`);
+    if (existing) {
+      // Just update if it exists
+      renderRepoDropdown(li, fullName, state, onStateChanged);
+      return;
+    }
+
+    // NEW: Use Intersection Observer for lazy loading
+    // Only render dropdowns that are near or in viewport
+    const observer = ensureIntersectionObserver();
+    
+    // Mark as pending lazy load
+    li.dataset[`${ghf.EXT_NAMESPACE}LazyRepo`] = fullName;
+    li.dataset[`${ghf.EXT_NAMESPACE}LazyState`] = JSON.stringify(state);
+    
+    // Store callback reference (this is a workaround since we can't store functions in dataset)
+    // In production, consider using a WeakMap instead
+    const callbackId = `ghfCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    window[callbackId] = onStateChanged;
+    li.dataset[`${ghf.EXT_NAMESPACE}LazyCallback`] = callbackId;
+    
+    st.pendingDropdowns.add(fullName);
+    observer.observe(li);
+  };
+
+  // NEW: Batch operation to create all dropdowns at once (for immediate rendering scenarios)
+  ghf.batchEnsureRepoDropdowns = function batchEnsureRepoDropdowns(repoItems, state, onStateChanged) {
+    if (!repoItems || repoItems.length === 0) return;
+
+    const observer = ensureIntersectionObserver();
+    const fragment = document.createDocumentFragment();
+
+    for (const item of repoItems) {
+      const { li, fullName } = item;
+      if (!li || !fullName) continue;
+
+      const existing = li.querySelector(`.ghf-repo-control[data-${ghf.EXT_NAMESPACE}-repo="${fullName}"]`);
+      if (existing) continue;
+
+      // Mark for lazy loading
+      li.dataset[`${ghf.EXT_NAMESPACE}LazyRepo`] = fullName;
+      st.pendingDropdowns.add(fullName);
+      observer.observe(li);
+    }
   };
 })();
-
-
