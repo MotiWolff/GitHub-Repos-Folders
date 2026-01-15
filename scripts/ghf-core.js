@@ -16,7 +16,13 @@
     allPagesProgress: "",
 
     // storage save queue
-    saveQueue: Promise.resolve()
+    saveQueue: Promise.resolve(),
+
+    // State caching to reduce storage operations
+    stateCache: null,
+    stateCacheTimestamp: 0,
+    stateCacheTTL: 5000, // 5 seconds
+    migrationCompleted: false
   });
 
   ghf.EXT_NAMESPACE = "ghf";
@@ -62,6 +68,13 @@
 
   ghf.safeText = function safeText(s) {
     return (s ?? "").toString().trim();
+  };
+
+  // NEW: Sanitize folder names to prevent XSS and data issues
+  ghf.sanitizeFolderName = function sanitizeFolderName(name) {
+    const text = ghf.safeText(name);
+    // Remove potentially dangerous characters and limit length
+    return text.replace(/[<>"'`]/g, '').slice(0, 100);
   };
 
   ghf.isExtensionContextValid = function isExtensionContextValid() {
@@ -138,10 +151,17 @@
     return m[1].toLowerCase() === login.toLowerCase();
   };
 
+  // NEW: Invalidate state cache
+  ghf.invalidateStateCache = function invalidateStateCache() {
+    st.stateCache = null;
+    st.stateCacheTimestamp = 0;
+  };
+
   ghf.clearCurrentAccountData = async function clearCurrentAccountData() {
     const key = ghf.getStorageKey();
     st.lastUiError = "";
     st.lastUiInfo = "";
+    ghf.invalidateStateCache();
     try {
       const STORAGE_AREA = ghf.getStorageArea();
       if (!STORAGE_AREA) {
@@ -186,6 +206,12 @@
   };
 
   ghf.storageGet = async function storageGet() {
+    // NEW: Check cache first
+    const now = Date.now();
+    if (st.stateCache && (now - st.stateCacheTimestamp) < st.stateCacheTTL) {
+      return structuredClone(st.stateCache);
+    }
+
     st.lastUiError = "";
     try {
       const STORAGE_AREA = ghf.getStorageArea();
@@ -194,12 +220,25 @@
       if (!STORAGE_AREA) {
         // localStorage fallback: attempt migration from legacy unscoped key once
         const scopedRaw = globalThis.localStorage?.getItem(scopedKey);
-        if (scopedRaw) return ghf.normalizeState(JSON.parse(scopedRaw));
-        const legacyRaw = globalThis.localStorage?.getItem(legacyKey);
-        if (legacyRaw) {
-          globalThis.localStorage?.setItem(scopedKey, legacyRaw);
-          globalThis.localStorage?.removeItem(legacyKey);
-          return ghf.normalizeState(JSON.parse(legacyRaw));
+        if (scopedRaw) {
+          const state = ghf.normalizeState(JSON.parse(scopedRaw));
+          // Cache the result
+          st.stateCache = state;
+          st.stateCacheTimestamp = now;
+          return structuredClone(state);
+        }
+        // Only migrate if not already done
+        if (!st.migrationCompleted) {
+          const legacyRaw = globalThis.localStorage?.getItem(legacyKey);
+          if (legacyRaw) {
+            globalThis.localStorage?.setItem(scopedKey, legacyRaw);
+            globalThis.localStorage?.removeItem(legacyKey);
+            st.migrationCompleted = true;
+            const state = ghf.normalizeState(JSON.parse(legacyRaw));
+            st.stateCache = state;
+            st.stateCacheTimestamp = now;
+            return structuredClone(state);
+          }
         }
         return structuredClone(ghf.DEFAULT_STATE);
       }
@@ -212,12 +251,17 @@
         });
       });
 
-      // Prefer scoped value; migrate legacy value if present.
+      // Prefer scoped value; migrate legacy value if present (only once per session).
       const scoped = obj?.[scopedKey];
-      if (scoped && typeof scoped === "object") return ghf.normalizeState(scoped);
+      if (scoped && typeof scoped === "object") {
+        const state = ghf.normalizeState(scoped);
+        st.stateCache = state;
+        st.stateCacheTimestamp = now;
+        return structuredClone(state);
+      }
 
       const legacy = obj?.[legacyKey];
-      if (legacy && typeof legacy === "object") {
+      if (legacy && typeof legacy === "object" && !st.migrationCompleted) {
         // One-time migration: copy legacy → scoped, then remove legacy.
         await new Promise((resolve, reject) => {
           STORAGE_AREA.set({ [scopedKey]: legacy }, () => {
@@ -231,7 +275,11 @@
         } catch {
           // ignore
         }
-        return ghf.normalizeState(legacy);
+        st.migrationCompleted = true;
+        const state = ghf.normalizeState(legacy);
+        st.stateCache = state;
+        st.stateCacheTimestamp = now;
+        return structuredClone(state);
       }
 
       return structuredClone(ghf.DEFAULT_STATE);
@@ -248,6 +296,10 @@
 
   ghf.storageSet = async function storageSet(state) {
     st.lastUiError = "";
+    // NEW: Update cache on write
+    st.stateCache = structuredClone(state);
+    st.stateCacheTimestamp = Date.now();
+    
     try {
       const STORAGE_AREA = ghf.getStorageArea();
       if (!STORAGE_AREA) {
@@ -287,7 +339,7 @@
   };
 
   ghf.createFolder = async function createFolder(folderName) {
-    const name = ghf.safeText(folderName);
+    const name = ghf.sanitizeFolderName(folderName);
     if (name.length === 0) return null;
     return ghf.queueSave((s) => {
       s.folders.push({ id: ghf.uuid(), name, collapsed: false });
@@ -296,7 +348,7 @@
   };
 
   ghf.renameFolder = async function renameFolder(folderId, newName) {
-    const name = ghf.safeText(newName);
+    const name = ghf.sanitizeFolderName(newName);
     if (name.length === 0) return null;
     return ghf.queueSave((s) => {
       const f = s.folders.find((x) => x.id === folderId);
@@ -323,5 +375,3 @@
     });
   };
 })();
-
-
