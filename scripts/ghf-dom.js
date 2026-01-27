@@ -3,6 +3,10 @@
   if (!ghf) return;
   const st = ghf._state;
 
+  // NEW: Add page caching for "Load All Pages" feature
+  st.pageCache = st.pageCache || new Map();
+  st.maxConcurrentRequests = 3; // Limit concurrent fetches
+
   ghf.findRepoListUl = function findRepoListUl(root = document) {
     if (root === document && st.allPagesMode && st.allPagesUl?.isConnected) return st.allPagesUl;
     const candidates = [
@@ -119,6 +123,9 @@
     st.allPagesMode = false;
     st.allPagesProgress = "";
 
+    // NEW: Clear page cache when exiting
+    st.pageCache.clear();
+
     try {
       st.allPagesAbort?.abort?.();
     } catch {
@@ -175,6 +182,62 @@
     onStateChanged(await ghf.storageGet());
   }
 
+  // NEW: Fetch a single page with caching
+  async function fetchPageWithCache(pageNum, signal) {
+    const url = ghf.buildPageUrl(pageNum);
+    
+    // Check cache first
+    if (st.pageCache.has(url)) {
+      return st.pageCache.get(url);
+    }
+
+    const res = await fetch(url, { credentials: "include", signal });
+    const html = await res.text();
+    
+    // Cache the result
+    st.pageCache.set(url, html);
+    
+    return html;
+  }
+
+  // NEW: Load multiple pages in parallel with controlled concurrency
+  async function loadPagesInParallel(pageNumbers, signal, onProgress) {
+    const results = new Map();
+    const queue = [...pageNumbers];
+    let completed = 0;
+
+    const loadBatch = async () => {
+      while (queue.length > 0) {
+        if (signal.aborted) return;
+        
+        const pageNum = queue.shift();
+        if (!pageNum) continue;
+
+        try {
+          const html = await fetchPageWithCache(pageNum, signal);
+          results.set(pageNum, html);
+          completed++;
+          
+          if (onProgress) {
+            await onProgress(completed, pageNumbers.length);
+          }
+        } catch (e) {
+          if (!signal.aborted) {
+            console.warn(`[ghf] Failed to load page ${pageNum}:`, e);
+          }
+        }
+      }
+    };
+
+    // Create concurrent workers
+    const workers = Array(Math.min(st.maxConcurrentRequests, pageNumbers.length))
+      .fill(null)
+      .map(() => loadBatch());
+
+    await Promise.all(workers);
+    return results;
+  }
+
   ghf.loadAllPagesIntoCombinedList = async function loadAllPagesIntoCombinedList(originalUl, totalPages, onStateChanged) {
     const signal = resetAllPagesAbort();
 
@@ -183,19 +246,39 @@
     combinedUl.innerHTML = "";
 
     const seen = new Set();
+    
+    // Add repos from current page (page 1) first
     for (const item of ghf.getRepoLis(originalUl)) {
       appendRepoLi(item, combinedUl, seen);
     }
 
     await setAllPagesProgressAndRerenderPanel(`Loaded page 1/${totalPages}…`, onStateChanged);
 
-    for (let page = 2; page <= totalPages; page += 1) {
-      if (signal.aborted) return;
-      await setAllPagesProgressAndRerenderPanel(`Loading page ${page}/${totalPages}…`, onStateChanged);
+    if (totalPages <= 1) return;
 
-      const res = await fetch(ghf.buildPageUrl(page), { credentials: "include", signal });
-      const html = await res.text();
+    // NEW: Load remaining pages in parallel
+    const remainingPages = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+    
+    const pageResults = await loadPagesInParallel(
+      remainingPages,
+      signal,
+      async (completed, total) => {
+        if (signal.aborted) return;
+        await setAllPagesProgressAndRerenderPanel(
+          `Loading pages ${completed + 1}/${totalPages}…`,
+          onStateChanged
+        );
+      }
+    );
+
+    if (signal.aborted) return;
+
+    // Process results in order to maintain consistent repo ordering
+    for (let page = 2; page <= totalPages; page++) {
       if (signal.aborted) return;
+      
+      const html = pageResults.get(page);
+      if (!html) continue;
 
       const doc = new DOMParser().parseFromString(html, "text/html");
       const ul = ghf.findRepoListUl(doc);
@@ -206,9 +289,7 @@
       }
     }
 
-    st.allPagesProgress = `Loaded ${totalPages} pages.`;
+    st.allPagesProgress = `Loaded ${totalPages} pages (${seen.size} repositories).`;
     ghf.refresh?.();
   };
 })();
-
-

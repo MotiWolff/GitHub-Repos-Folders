@@ -3,6 +3,10 @@
   if (!ghf) return;
   const st = ghf._state;
 
+  // NEW: Track last mutation time for throttling
+  st.lastMutationTime = 0;
+  st.mutationThrottleMs = 100; // Minimum time between mutation processing
+
   function cleanupUi() {
     // Exit any special mode and remove injected UI bits.
     try {
@@ -31,6 +35,7 @@
       });
   }
 
+  // NEW: Optimized refresh with increased debounce and better checks
   ghf.refresh = ghf.debounce(async () => {
     if (st.isStopped) return;
     if (st.suppressRefreshCount > 0) return;
@@ -72,23 +77,101 @@
       for (const item of repoLis) ghf.ensureRepoDropdown(item, state, onStateChanged);
       ghf.renderGrouping(ul, repoLis, state);
     });
-  }, 120);
+  }, 250); // NEW: Increased from 120ms to 250ms
+
+  // NEW: Throttled mutation handler
+  function handleMutations(mutations) {
+    if (st.isStopped) return;
+    if (st.suppressRefreshCount > 0) return;
+
+    // NEW: Throttle rapid mutations
+    const now = Date.now();
+    if (now - st.lastMutationTime < st.mutationThrottleMs) {
+      return;
+    }
+    st.lastMutationTime = now;
+
+    // NEW: Check if mutations are relevant to our extension
+    let isRelevant = false;
+    for (const mutation of mutations) {
+      // Ignore mutations to our own elements
+      if (mutation.target?.closest?.('.ghf-panel')) continue;
+      if (mutation.target?.closest?.('.ghf-repo-control')) continue;
+      if (mutation.target?.closest?.('.ghf-folder-header')) continue;
+      
+      // Check if mutation affects repo list
+      if (mutation.target?.closest?.(ghf.SELECTORS.profileRepoListUl)) {
+        isRelevant = true;
+        break;
+      }
+      if (mutation.target?.closest?.(ghf.SELECTORS.orgRepoListUl)) {
+        isRelevant = true;
+        break;
+      }
+      
+      // Check if new nodes contain repo links
+      for (const node of mutation.addedNodes) {
+        if (node.nodeType === 1 && node.querySelector?.(ghf.SELECTORS.repoLink)) {
+          isRelevant = true;
+          break;
+        }
+      }
+      
+      if (isRelevant) break;
+    }
+
+    if (isRelevant) {
+      ghf.refresh();
+    }
+  }
 
   function installObservers() {
-    st.domObserver = new MutationObserver(() => {
-      if (st.isStopped) return;
-      if (st.suppressRefreshCount > 0) return;
-      ghf.refresh();
-    });
-    st.domObserver.observe(document.documentElement, { subtree: true, childList: true });
+    // NEW: More specific MutationObserver configuration
+    st.domObserver = new MutationObserver(handleMutations);
+    
+    // NEW: Observe specific containers instead of entire document
+    const targetContainers = [
+      document.querySelector('#user-repositories-list'),
+      document.querySelector('div.org-repos'),
+      document.querySelector('#org-repositories'),
+      document.body // Fallback to body for Turbo navigation
+    ].filter(Boolean);
 
+    for (const container of targetContainers) {
+      st.domObserver.observe(container, {
+        subtree: true,
+        childList: true,
+        attributes: false,      // NEW: Don't watch attribute changes
+        characterData: false    // NEW: Don't watch text changes
+      });
+    }
+
+    // If no specific containers found, observe document but with stricter settings
+    if (targetContainers.length === 0) {
+      st.domObserver.observe(document.documentElement, {
+        subtree: true,
+        childList: true,
+        attributes: false,
+        characterData: false
+      });
+    }
+
+    // Handle Turbo/PJAX navigation
     document.addEventListener("turbo:load", () => ghf.refresh());
     document.addEventListener("pjax:end", () => ghf.refresh());
     globalThis.addEventListener("popstate", () => ghf.refresh());
+    
+    // NEW: Handle turbo:render for better Turbo integration
+    document.addEventListener("turbo:render", () => {
+      // Re-initialize observers after Turbo render
+      if (st.domObserver) {
+        st.domObserver.disconnect();
+        installObservers();
+      }
+      ghf.refresh();
+    });
   }
 
   installObservers();
   ghf.refresh();
 })();
-
-
